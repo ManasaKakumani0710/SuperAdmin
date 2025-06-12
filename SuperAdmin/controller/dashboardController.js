@@ -80,39 +80,87 @@ const influencerIds = influencers.map(user => user._id.toString());
 
 const getDashboardSummary = async (req, res) => {
   try {
-    const userCounts = await User.aggregate([
-      { $group: { _id: "$userType", count: { $sum: 1 } } }
-    ]);
+    const now = new Date();
 
-    const totalUsers = { general: 0, influencer: 0, vendor: 0 };
-    userCounts.forEach(u => {
-      totalUsers[u._id] = u.count;
-    });
+    const startOfDay = new Date(now);
+    startOfDay.setHours(0, 0, 0, 0);
 
-    const users = await User.find({ userType: { $in: ['vendor', 'influencer'] } }, '_id');
-    console.log("usersPresent::",users) 
-    const userIds = users.map(u => u._id.toString());
-    console.log("userIds::",userIds);
+    const startOfWeek = new Date(now);
+    startOfWeek.setDate(now.getDate() - now.getDay());
+    startOfWeek.setHours(0, 0, 0, 0);
 
-    const matchedOrders = await Order.find({ userId: { $in: userIds } });
-console.log("Matched Orders:", matchedOrders);
-console.log("Matched Count:", matchedOrders.length);
+    const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+    const startOfYear = new Date(now.getFullYear(), 0, 1);
+
     
+    const getUserCounts = async (startDate) => {
+      const result = await User.aggregate([
+        { $match: { createdAt: { $gte: startDate } } },
+        { $group: { _id: "$userType", count: { $sum: 1 } } }
+      ]);
 
-    const totalSalesAgg = await Order.aggregate([
-  { $match: { userId: { $in: userIds } } },
-  { $group: { _id: null, total: { $sum: "$total" } } }
-]);
-    const totalSales = totalSalesAgg[0]?.total || 0;
+      const counts = { general: 0, influencer: 0, vendor: 0 };
+      result.forEach(u => counts[u._id] = u.count);
+      return counts;
+    };
 
+   
+    const vendorInfluencerUsers = await User.find(
+      { userType: { $in: ['vendor', 'influencer'] } },
+      '_id'
+    );
+    const userIds = vendorInfluencerUsers.map(u => new mongoose.Types.ObjectId(u._id));
+
+    const getSales = async (startDate) => {
+      const result = await Order.aggregate([
+        {
+          $match: {
+            userId: { $in: userIds },
+            createdAt: { $gte: startDate }
+          }
+        },
+        { $group: { _id: null, total: { $sum: "$total" } } }
+      ]);
+      return result[0]?.total || 0;
+    };
+
+    
+    const totalUserCounts = await getUserCounts(new Date(0));
+
+    // --- Time-based User Counts ---
+    const dailyUsers = await getUserCounts(startOfDay);
+    const weeklyUsers = await getUserCounts(startOfWeek);
+    const monthlyUsers = await getUserCounts(startOfMonth);
+    const yearlyUsers = await getUserCounts(startOfYear);
+
+    // --- Time-based Sales Totals ---
+    const totalSales = await getSales(new Date(0));
+    const dailySales = await getSales(startOfDay);
+    const weeklySales = await getSales(startOfWeek);
+    const monthlySales = await getSales(startOfMonth);
+    const yearlySales = await getSales(startOfYear);
+
+    
     res.status(200).json({
       code: 200,
       message: "Dashboard summary data",
       data: {
-        totalUsers,
-        totalSales
+        userCounts: {
+          daily: dailyUsers,
+          weekly: weeklyUsers,
+          monthly: monthlyUsers,
+          yearly: yearlyUsers
+        },
+        salesTotals: {
+          
+          daily: dailySales,
+          weekly: weeklySales,
+          monthly: monthlySales,
+          yearly: yearlySales
+        }
       }
     });
+
   } catch (err) {
     console.error("Dashboard Summary Error:", err);
     res.status(500).json({

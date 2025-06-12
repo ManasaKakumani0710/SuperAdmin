@@ -13,7 +13,7 @@ app.use(cors());
 
 const authRoutes = require('./routes/authRoutes.js');
 
-// Use dashboard routes
+
 app.use('/api', dashboardRoutes);
 
 app.use('/api', userRoutes);
