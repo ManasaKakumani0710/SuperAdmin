@@ -1,4 +1,5 @@
 const User = require('../models/users');
+const vendorDocument = require('../models/vendorDocument')
 
 const getBusinessUsers = async (req, res) => {
   const { page = 1, limit = 5, type } = req.query;
@@ -74,10 +75,16 @@ const getUserDetails = async (req, res) => {
       });
     }
 
+
+    const documents = await vendorDocument.find({ userId }).select('-__v');
+
     res.status(200).json({
       code: 200,
       message: 'User details fetched successfully',
-      data: user
+      data: {
+        user,
+        documents
+      }
     });
 
   } catch (err) {

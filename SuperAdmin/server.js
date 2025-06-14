@@ -7,6 +7,8 @@ dotenv.config();
 connectDB();
 const dashboardRoutes = require('./routes/dashboardRoutes.js');
 const userRoutes = require('./routes/userDetailRoutes.js');
+const downloadRoutes = require('./routes/download');
+
 const app = express();
 app.use(express.json());
 app.use(cors());
@@ -18,6 +20,8 @@ app.use('/api', dashboardRoutes);
 
 app.use('/api', userRoutes);
 app.use('/api',authRoutes);
+app.use('/api/files', downloadRoutes);
+
 
 
 const PORT = process.env.PORT || 8080;
