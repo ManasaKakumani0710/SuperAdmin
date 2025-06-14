@@ -3,11 +3,21 @@ const Order = require("../models/Order");
 const mongoose = require("mongoose");
 
 const getSalesGraph = async (req, res) => {
-  const { type = "Monthly" } = req.query;
+  const { type = "Monthly", startDate, endDate } = req.body;
 
   if (!["Daily", "Weekly", "Monthly", "Yearly"].includes(type)) {
     return res.status(400).json({ message: "Invalid report type" });
   }
+
+  if (!startDate || !endDate) {
+    return res
+      .status(400)
+      .json({ message: "startDate and endDate are required" });
+  }
+
+  const start = new Date(startDate);
+  const end = new Date(endDate);
+  end.setHours(23, 59, 59, 999); // include full end date
 
   let dateFormat;
   switch (type) {
@@ -37,7 +47,12 @@ const getSalesGraph = async (req, res) => {
 
     const getSales = async (userIds) => {
       return await Order.aggregate([
-        { $match: { userId: { $in: userIds } } },
+        {
+          $match: {
+            userId: { $in: userIds },
+            createdAt: { $gte: start, $lte: end },
+          },
+        },
         { $group: { _id: dateFormat, total: { $sum: "$total" } } },
         { $sort: { _id: 1 } },
       ]);
