@@ -3,19 +3,19 @@ const Order = require('../models/Order');
 const mongoose = require('mongoose');
 
 const getSalesGraph = async (req, res) => {
-  const { type = 'Monthly', startDate, endDate } = req.body;
+  const { type = 'Monthly', startDate, endDate, page = 1, limit = 10 } = req.body;
 
   if (!['Daily', 'Weekly', 'Monthly', 'Yearly'].includes(type)) {
-    return res.status(400).json({ message: 'Invalid report type' });
+    return res.status(400).json({ code: 400, message: 'Invalid report type', data: null });
   }
 
   if (!startDate || !endDate) {
-    return res.status(400).json({ message: 'startDate and endDate are required' });
+    return res.status(400).json({ code: 400, message: 'startDate and endDate are required', data: null });
   }
 
   const start = new Date(startDate);
   const end = new Date(endDate);
-  end.setHours(23, 59, 59, 999); // include full end date
+  end.setHours(23, 59, 59, 999); 
 
   let dateFormat;
   switch (type) {
@@ -38,8 +38,9 @@ const getSalesGraph = async (req, res) => {
       User.find({ userType: 'vendor' }, '_id'),
       User.find({ userType: 'influencer' }, '_id')
     ]);
-   const vendorIds = vendors.map(user => user._id.toString());
-   const influencerIds = influencers.map(user => user._id.toString());
+
+    const vendorIds = vendors.map(user => user._id.toString());
+    const influencerIds = influencers.map(user => user._id.toString());
 
     const getSales = async (userIds) => {
       return await Order.aggregate([
@@ -63,21 +64,39 @@ const getSalesGraph = async (req, res) => {
       ...vendorSales.map(d => d._id),
       ...influencerSales.map(d => d._id)
     ]);
-    const labels = Array.from(labelSet).sort();
+    const sortedLabels = Array.from(labelSet).sort();
 
     const mapData = (data) => {
       const mapped = {};
       data.forEach(d => mapped[d._id] = d.total);
-      return labels.map(label => mapped[label] || 0);
+      return sortedLabels.map(label => mapped[label] || 0);
     };
+
+    const fullVendor = mapData(vendorSales);
+    const fullInfluencer = mapData(influencerSales);
+
+    const pageInt = parseInt(page);
+    const limitInt = parseInt(limit);
+    const startIndex = (pageInt - 1) * limitInt;
+    const endIndex = startIndex + limitInt;
+
+    const paginatedLabels = sortedLabels.slice(startIndex, endIndex);
+    const paginatedVendor = fullVendor.slice(startIndex, endIndex);
+    const paginatedInfluencer = fullInfluencer.slice(startIndex, endIndex);
 
     res.status(200).json({
       code: 200,
       message: "Sales graph data",
       data: {
-        labels,
-        vendor: mapData(vendorSales),
-        influencer: mapData(influencerSales)
+        labels: paginatedLabels,
+        vendor: paginatedVendor,
+        influencer: paginatedInfluencer,
+        pagination: {
+          currentPage: pageInt,
+          limit: limitInt,
+          totalItems: sortedLabels.length,
+          totalPages: Math.ceil(sortedLabels.length / limitInt)
+        }
       }
     });
 
@@ -86,6 +105,7 @@ const getSalesGraph = async (req, res) => {
     res.status(500).json({
       code: 500,
       message: "Failed to get sales graph",
+      data: null,
       error: err.message
     });
   }
