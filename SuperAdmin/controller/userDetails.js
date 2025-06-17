@@ -1,17 +1,19 @@
-const User = require('../models/users');
-const vendorDocument = require('../models/vendorDocument')
+const User = require("../models/users");
+const vendorDocument = require("../models/vendorDocument");
 
 const getBusinessUsers = async (req, res) => {
+  // extract and parse page and limit from req.body
   let { page, limit, type } = req.body;
 
   page = parseInt(page) || 1;
   limit = parseInt(limit);
   if (!Number.isInteger(limit) || limit <= 0) {
-    limit = 10; 
+    limit = 10; // default fallback
   }
 
   const skip = (page - 1) * limit;
 
+  // Validate user type if provided
   const validTypes = ["vendor", "influencer"];
   if (type && !validTypes.includes(type)) {
     return res.status(400).json({
@@ -21,10 +23,10 @@ const getBusinessUsers = async (req, res) => {
   }
 
   try {
- 
+    // Build the query dynamically based on user type
     const query = type ? { userType: type } : { userType: { $in: validTypes } };
 
-  
+    // Fetch users
     const users = await User.find(query)
       .select("_id name userType profile status isBan brand followers profile")
       .skip(skip)
@@ -32,21 +34,25 @@ const getBusinessUsers = async (req, res) => {
 
     const total = await User.countDocuments(query);
 
-   
+    // Format response
     const formatted = users.map((user) => ({
       id: user._id,
       name: user.userType === "vendor" ? user.profile?.businessName : user.name,
       location:
         user.userType === "vendor"
-          ? `${user.profile?.businessAddress?.state || ""}, ${user.profile?.businessAddress?.country || ""}`
+          ? `${user.profile?.businessAddress?.state || ""}, ${
+              user.profile?.businessAddress?.country || ""
+            }`
           : `${user.profile?.state || ""}, ${user.profile?.country || ""}`,
-      category: user.userType === "vendor" ? user.profile?.categories : undefined,
-      niche: user.userType === "influencer" ? user.profile?.niche || "" : undefined,
+      category:
+        user.userType === "vendor" ? user.profile?.categories : undefined,
+      niche:
+        user.userType === "influencer" ? user.profile?.niche || "" : undefined,
       status: user.userType === "vendor" ? user.status : undefined,
       isBan: user.userType === "influencer" ? user.isBan : undefined,
     }));
 
- 
+    // Return response
     res.status(200).json({
       code: 200,
       message: "Business users fetched",
@@ -65,7 +71,6 @@ const getBusinessUsers = async (req, res) => {
     });
   }
 };
-
 
 const getUserDetails = async (req, res) => {
   const { userId } = req.query;
@@ -89,16 +94,15 @@ const getUserDetails = async (req, res) => {
       });
     }
 
-
-    const documents = await vendorDocument.find({ userId }).select('-__v');
+    const documents = await vendorDocument.find({ userId }).select("-__v");
 
     res.status(200).json({
       code: 200,
-      message: 'User details fetched successfully',
+      message: "User details fetched successfully",
       data: {
         user,
-        documents
-      }
+        documents,
+      },
     });
   } catch (err) {
     res.status(500).json({
