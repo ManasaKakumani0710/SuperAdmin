@@ -8,7 +8,7 @@ const {
   updateInfluencerBan,
 } = require("../controller/userDetails");
 
-router.get("/businessandambassador/users", getBusinessUsers);
+router.post("/businessandambassador/users", getBusinessUsers);
 router.get("/user/details", getUserDetails);
 router.post("/user/vendor/status", updateVendorStatus);
 router.post("/user/influencer/ban", updateInfluencerBan);

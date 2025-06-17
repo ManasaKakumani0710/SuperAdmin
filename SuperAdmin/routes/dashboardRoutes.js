@@ -9,6 +9,6 @@ const {
 
 router.get('/dashboard/summary', getDashboardSummary);
 
-router.post('/dashboard/graph', getSalesGraph);
+router.get('/dashboard/graph', getSalesGraph);
 
 module.exports = router;

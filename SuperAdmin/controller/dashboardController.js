@@ -2,129 +2,163 @@ const User = require("../models/users");
 const Order = require("../models/Order");
 const mongoose = require("mongoose");
 
+
 const getSalesGraph = async (req, res) => {
-  const {
-    type = "Monthly",
-    startDate,
-    endDate,
-    page = 1,
-    limit = 10,
-  } = req.body;
-
-  if (!["Daily", "Weekly", "Monthly", "Yearly"].includes(type)) {
-    return res
-      .status(400)
-      .json({ code: 400, message: "Invalid report type", data: null });
-  }
-
-  if (!startDate || !endDate) {
-    return res
-      .status(400)
-      .json({
-        code: 400,
-        message: "startDate and endDate are required",
-        data: null,
-      });
-  }
-
-  const start = new Date(startDate);
-  const end = new Date(endDate);
-  end.setHours(23, 59, 59, 999);
-
-  let dateFormat;
-  switch (type) {
-    case "Daily":
-      dateFormat = {
-        $dateToString: { format: "%Y-%m-%d", date: "$createdAt" },
-      };
-      break;
-    case "Weekly":
-      dateFormat = { $dateToString: { format: "%G-W%V", date: "$createdAt" } };
-      break;
-    case "Monthly":
-      dateFormat = { $dateToString: { format: "%Y-%m", date: "$createdAt" } };
-      break;
-    case "Yearly":
-      dateFormat = { $dateToString: { format: "%Y", date: "$createdAt" } };
-      break;
-  }
+  const { referenceDate } = req.query;
+  const refDate = referenceDate ? new Date(referenceDate) : new Date();
 
   try {
-    const [vendors, influencers] = await Promise.all([
+    const [vendors, influencers, totalUsers, totalBrands] = await Promise.all([
       User.find({ userType: "vendor" }, "_id"),
       User.find({ userType: "influencer" }, "_id"),
+      User.countDocuments(),
+      User.countDocuments({ userType: "vendor" }), // Assuming vendors = brands
     ]);
 
-    const vendorIds = vendors.map((user) => user._id.toString());
-    const influencerIds = influencers.map((user) => user._id.toString());
+    const vendorIds = vendors.map(u => u._id.toString());
+    const influencerIds = influencers.map(u => u._id.toString());
 
-    const getSales = async (userIds) => {
-      return await Order.aggregate([
+    const timeBuckets = {
+      Daily: generateTimeRanges(refDate, "hour", 4, 6),
+      Weekly: generateTimeRanges(refDate, "day", 1, 7),
+      Monthly: generateTimeRanges(refDate, "week", 7, 4),
+      Yearly: generateTimeRanges(refDate, "month", 30, 12),
+    };
+
+    const weekdayMap = {
+      1: "Mon",
+      2: "Tue",
+      3: "Wed",
+      4: "Thu",
+      5: "Fri",
+      6: "Sat",
+      7: "Sun"
+    };
+
+    const getGraphData = async (userIds, buckets, granularity) => {
+      const match = {
+        userId: { $in: userIds },
+        createdAt: { $gte: buckets[0].start, $lte: buckets[buckets.length - 1].end },
+      };
+
+      const format = {
+        hour: { format: "%H:00", field: "$createdAt" },
+        day: { format: "%u", field: "$createdAt" }, // MongoDB doesn't support %a
+        week: { format: "Week of %b %d", field: "$createdAt" },
+        month: { format: "%b", field: "$createdAt" },
+      }[granularity];
+
+      const data = await Order.aggregate([
+        { $match: match },
         {
-          $match: {
-            userId: { $in: userIds },
-            createdAt: { $gte: start, $lte: end },
+          $project: {
+            value: "$total",
+            fullDate: "$createdAt",
+            label: { $dateToString: { format: format.format, date: format.field } }
           },
         },
-        { $group: { _id: dateFormat, total: { $sum: "$total" } } },
-        { $sort: { _id: 1 } },
-      ]);
-    };
-
-    const [vendorSales, influencerSales] = await Promise.all([
-      getSales(vendorIds),
-      getSales(influencerIds),
-    ]);
-
-    const labelSet = new Set([
-      ...vendorSales.map((d) => d._id),
-      ...influencerSales.map((d) => d._id),
-    ]);
-    const sortedLabels = Array.from(labelSet).sort();
-
-    const mapData = (data) => {
-      const mapped = {};
-      data.forEach((d) => (mapped[d._id] = d.total));
-      return sortedLabels.map((label) => mapped[label] || 0);
-    };
-
-    const fullVendor = mapData(vendorSales);
-    const fullInfluencer = mapData(influencerSales);
-
-    const pageInt = parseInt(page);
-    const limitInt = parseInt(limit);
-    const startIndex = (pageInt - 1) * limitInt;
-    const endIndex = startIndex + limitInt;
-
-    const paginatedLabels = sortedLabels.slice(startIndex, endIndex);
-    const paginatedVendor = fullVendor.slice(startIndex, endIndex);
-    const paginatedInfluencer = fullInfluencer.slice(startIndex, endIndex);
-
-    res.status(200).json({
-      code: 200,
-      message: "Sales graph data",
-      data: {
-        labels: paginatedLabels,
-        vendor: paginatedVendor,
-        influencer: paginatedInfluencer,
-        pagination: {
-          currentPage: pageInt,
-          limit: limitInt,
-          totalItems: sortedLabels.length,
-          totalPages: Math.ceil(sortedLabels.length / limitInt),
+        {
+          $group: {
+            _id: "$label",
+            value: { $sum: "$value" },
+            fullDate: { $first: "$fullDate" }
+          }
         },
-      },
+        { $sort: { fullDate: 1 } }
+      ]);
+
+      return data.map((d, i) => {
+        let labelValue = d._id;
+        if (granularity === "day") {
+          labelValue = weekdayMap[parseInt(d._id)];
+        }
+
+        return {
+          id: i + 1,
+          [granularity]: labelValue,
+          value: d.value,
+          fullDate: d.fullDate
+        };
+      });
+    };
+
+    const assembleData = async (label, granularity) => {
+      const buckets = timeBuckets[label];
+      const [salesData, ambassadorData] = await Promise.all([
+        getGraphData(vendorIds, buckets, granularity),
+        getGraphData(influencerIds, buckets, granularity),
+      ]);
+
+      return {
+        periodLabel: label,
+        salesData,
+        ambassadorData,
+        summary: {
+          totalUsers,
+          totalBrands,
+          totalAmbassadors: influencerIds.length,
+          totalSales: salesData.reduce((acc, d) => acc + d.value, 0),
+        }
+      };
+    };
+
+    const [Daily, Weekly, Monthly, Yearly] = await Promise.all([
+      assembleData("Daily", "hour"),
+      assembleData("Weekly", "day"),
+      assembleData("Monthly", "week"),
+      assembleData("Yearly", "month"),
+    ]);
+
+    return res.status(200).json({
+      code: 200,
+      message: "Dashboard data fetched",
+      data: { Daily, Weekly, Monthly, Yearly }
     });
+
   } catch (err) {
-    console.error("Sales Graph Error:", err);
+    console.error("Dashboard error:", err);
     res.status(500).json({
       code: 500,
-      message: "Failed to get sales graph",
-      data: null,
-      error: err.message,
+      message: "Error fetching dashboard data",
+      error: err.message
     });
   }
 };
+
+// Helper to generate date ranges for time buckets
+function generateTimeRanges(referenceDate, unit, stepSize, count) {
+  const ranges = [];
+  const ref = new Date(referenceDate);
+  for (let i = 0; i < count; i++) {
+    const start = new Date(ref);
+    const end = new Date(ref);
+
+    if (unit === "hour") {
+      start.setHours(i * stepSize, 0, 0, 0);
+      end.setHours((i + 1) * stepSize - 1, 59, 59, 999);
+    } else if (unit === "day") {
+      start.setDate(ref.getDate() - (count - i - 1));
+      end.setDate(start.getDate());
+      start.setHours(0, 0, 0, 0);
+      end.setHours(23, 59, 59, 999);
+    } else if (unit === "week") {
+      start.setDate(ref.getDate() - ((count - i - 1) * stepSize));
+      end.setDate(start.getDate() + 6);
+      start.setHours(0, 0, 0, 0);
+      end.setHours(23, 59, 59, 999);
+    } else if (unit === "month") {
+      const month = ref.getMonth() - (count - i - 1);
+      start.setMonth(month, 1);
+      end.setMonth(month + 1, 0);
+      start.setHours(0, 0, 0, 0);
+      end.setHours(23, 59, 59, 999);
+    }
+
+    ranges.push({ start, end });
+  }
+  return ranges;
+}
+
 
 const getDashboardSummary = async (req, res) => {
   try {

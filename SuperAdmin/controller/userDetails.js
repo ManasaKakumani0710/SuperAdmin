@@ -2,10 +2,16 @@ const User = require('../models/users');
 const vendorDocument = require('../models/vendorDocument')
 
 const getBusinessUsers = async (req, res) => {
-  const { page = 1, limit = 10, type } = req.query;
-  const skip = (parseInt(page) - 1) * parseInt(limit);
+  let { page, limit, type } = req.body;
 
-  // Validate type
+  page = parseInt(page) || 1;
+  limit = parseInt(limit);
+  if (!Number.isInteger(limit) || limit <= 0) {
+    limit = 10; 
+  }
+
+  const skip = (page - 1) * limit;
+
   const validTypes = ["vendor", "influencer"];
   if (type && !validTypes.includes(type)) {
     return res.status(400).json({
@@ -15,39 +21,39 @@ const getBusinessUsers = async (req, res) => {
   }
 
   try {
+ 
     const query = type ? { userType: type } : { userType: { $in: validTypes } };
 
+  
     const users = await User.find(query)
       .select("_id name userType profile status isBan brand followers profile")
       .skip(skip)
-      .limit(parseInt(limit));
-    console.log("UserDetails..", users);
+      .limit(limit);
+
     const total = await User.countDocuments(query);
 
+   
     const formatted = users.map((user) => ({
       id: user._id,
       name: user.userType === "vendor" ? user.profile?.businessName : user.name,
       location:
         user.userType === "vendor"
-          ? `${user.profile?.businessAddress?.state || ""},${
-              user.profile?.businessAddress?.country || ""
-            }`
-          : `${user.profile.state || ""}, ${user.profile.country || ""}`,
-      category:
-        user.userType === "vendor" ? user.profile?.categories : undefined,
-      niche:
-        user.userType === "influencer" ? user.profile?.niche || "" : undefined,
+          ? `${user.profile?.businessAddress?.state || ""}, ${user.profile?.businessAddress?.country || ""}`
+          : `${user.profile?.state || ""}, ${user.profile?.country || ""}`,
+      category: user.userType === "vendor" ? user.profile?.categories : undefined,
+      niche: user.userType === "influencer" ? user.profile?.niche || "" : undefined,
       status: user.userType === "vendor" ? user.status : undefined,
       isBan: user.userType === "influencer" ? user.isBan : undefined,
     }));
 
+ 
     res.status(200).json({
       code: 200,
       message: "Business users fetched",
       data: {
         total,
-        page: parseInt(page),
-        limit: parseInt(limit),
+        page,
+        limit,
         users: formatted,
       },
     });
@@ -59,6 +65,7 @@ const getBusinessUsers = async (req, res) => {
     });
   }
 };
+
 
 const getUserDetails = async (req, res) => {
   const { userId } = req.query;
